@@ -8,7 +8,8 @@ from typing import Dict, List, Optional, Tuple
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 文件路径
-STATS_FILE = "user_stats.json"
+DATA_DIR = "data"
+STATS_FILE = os.path.join(DATA_DIR, "user_stats.json")
 
 # 默认使用限制
 DEFAULT_DAILY_LIMIT = 50  # 每日默认请求数量限制
@@ -23,6 +24,14 @@ class UsageStats:
     
     def load_stats(self):
         """从文件加载统计数据"""
+        # 确保数据目录存在
+        if not os.path.exists(DATA_DIR):
+            try:
+                os.makedirs(DATA_DIR)
+                logging.info(f"已创建数据目录: {DATA_DIR}")
+            except Exception as e:
+                logging.error(f"创建数据目录时出错: {e}")
+                
         if os.path.exists(STATS_FILE):
             try:
                 with open(STATS_FILE, 'r') as f:
