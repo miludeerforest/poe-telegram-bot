@@ -1,90 +1,90 @@
-# Poe Telegram Bot
+# Poe Telegram Bot with Gemini Vision
 
-一个强大的Telegram机器人，集成了Poe API和Google Gemini图像识别功能，支持多种AI模型。
+A powerful Telegram bot that integrates Poe API and Google Gemini image recognition, supporting multiple AI models.
 
-## 功能特点
+## Features
 
-- 支持多种AI模型：GPT-4、Claude-3-Opus和Claude-3.5-Sonnet
-- 支持图片分析：使用Google Gemini 2.0 Flash模型识别图片内容
-- 支持用户白名单管理：限制机器人使用权限
-- 支持会话上下文管理：记住对话历史
-- 支持命令菜单：便捷访问机器人功能
+- Supports multiple AI models: GPT-4, Claude-3-Opus, and Claude-3.5-Sonnet
+- Image analysis: Uses Google Gemini 2.0 Flash model for image recognition
+- User whitelist management: Restricts bot usage permissions
+- Session context management: Remembers conversation history
+- Command menu: Easy access to bot functions
 
-## 安装步骤
+## Installation
 
-### 前提条件
+### Prerequisites
 
-- Docker和Docker Compose
-- Telegram Bot Token（从BotFather获取）
-- Poe API Key（从Poe网站获取）
-- Google Gemini API Key（从Google AI Studio获取）
+- Docker and Docker Compose
+- Telegram Bot Token (from BotFather)
+- Poe API Key (from Poe website)
+- Google Gemini API Key (from Google AI Studio)
 
-### 安装过程
+### Installation Process
 
-1. 克隆仓库：
+1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/poe-telegram-bot.git
+git clone https://github.com/miludeerforest/poe-telegram-bot.git
 cd poe-telegram-bot
 ```
 
-2. 配置环境变量：
+2. Configure environment variables:
 
-复制`.env.example`文件为`.env`并填入你的API密钥：
+Copy the `.env.example` file to `.env` and fill in your API keys:
 
 ```bash
 cp .env.example .env
-# 编辑.env文件
+# Edit the .env file
 ```
 
-或者直接在`docker-compose.yml`文件中填入相应的API密钥。
+Or directly fill in the corresponding API keys in the `docker-compose.yml` file.
 
-3. 构建并启动Docker容器：
+3. Build and start Docker containers:
 
 ```bash
 docker compose up -d
 ```
 
-## 使用方法
+## Usage
 
-### 基本命令
+### Basic Commands
 
-- `/start` - 开始与机器人对话
-- `/new` - 开始一个新的对话，清空上下文
-- `/gpt4` - 切换到GPT-4模型
-- `/claude3` - 切换到Claude-3-Opus模型
-- `/claude35` - 切换到Claude-3.5-Sonnet模型
+- `/start` - Start chatting with the bot
+- `/new` - Start a new conversation, clear context
+- `/gpt4` - Switch to GPT-4 model
+- `/claude3` - Switch to Claude-3-Opus model
+- `/claude35` - Switch to Claude-3.5-Sonnet model
 
-### 管理员命令
+### Admin Commands
 
-- `/adduser <用户ID>` - 添加用户到白名单
-- `/removeuser <用户ID>` - 从白名单移除用户
-- `/listusers` - 列出所有允许的用户
+- `/adduser <user ID>` - Add user to whitelist
+- `/removeuser <user ID>` - Remove user from whitelist
+- `/listusers` - List all allowed users
 
-### 图片处理功能
+### Image Processing Feature
 
-直接发送图片给机器人，系统将使用Google Gemini 2.0 Flash模型分析图片内容，然后将分析结果和图片的部分base64编码发送给Claude-3.5-Sonnet处理。
+Simply send an image to the bot, and the system will use Google Gemini 2.0 Flash model to analyze the image content, then send the analysis results and partial base64 encoding of the image to Claude-3.5-Sonnet for processing.
 
-您可以在发送图片时添加说明文字，指定您想了解的图片方面。
+You can add descriptive text when sending images to specify which aspects of the image you want to learn about.
 
-## 配置说明
+## Configuration
 
-在`docker-compose.yml`文件中，可以设置以下环境变量：
+In the `docker-compose.yml` file, you can set the following environment variables:
 
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot Token
 - `POE_API_KEY`: Poe API Key
 - `GOOGLE_API_KEY`: Google Gemini API Key
-- `ADMIN_USERS`: 管理员用户ID列表（逗号分隔）
-- `ALLOWED_USERS`: 允许使用机器人的普通用户ID列表（逗号分隔）
+- `ADMIN_USERS`: List of admin user IDs (comma-separated)
+- `ALLOWED_USERS`: List of regular user IDs allowed to use the bot (comma-separated)
 
-## 贡献指南
+## Contribution Guidelines
 
-欢迎提交Pull Request或Issue来改进此项目。
+Pull Requests or Issues are welcome to improve this project.
 
-## 许可证
+## License
 
 MIT
 
-## 免责声明
+## Disclaimer
 
-本项目仅供学习和研究使用，请遵循相关API的使用条款。 
+This project is for learning and research purposes only. Please follow the terms of use of the respective APIs. 
