@@ -24,9 +24,13 @@ async def setup_commands():
         BotCommand("gpt4", "切换到 GPT-4 模型"),
         BotCommand("claude3", "切换到 Claude-3-Opus 模型"),
         BotCommand("claude35", "切换到 Claude-3.5-Sonnet 模型"),
+        BotCommand("stats", "查看您的使用统计"),
         BotCommand("adduser", "【管理员】添加用户到白名单"),
         BotCommand("removeuser", "【管理员】从白名单移除用户"),
-        BotCommand("listusers", "【管理员】列出所有允许的用户")
+        BotCommand("listusers", "【管理员】列出所有允许的用户"),
+        BotCommand("allstats", "【管理员】查看所有用户的使用统计"),
+        BotCommand("setlimit", "【管理员】设置用户每日使用限制"),
+        BotCommand("resetusage", "【管理员】重置用户今日使用量")
     ]
     
     await bot.set_my_commands(commands)

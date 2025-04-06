@@ -5,6 +5,8 @@ from telegram.ext import Application, MessageHandler, filters, CommandHandler
 import logging
 import os
 import image_handler
+import usage_stats  # 导入用户使用统计模块
+from datetime import datetime, timedelta
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -128,7 +130,21 @@ async def handle_photo(update: Update, context):
     if not check_user_permission(user_id, update, context):
         return
     
-    logging.info(f"开始处理用户 {user_id} 的图片请求")
+    # 检查使用限制
+    allow_request, daily_used, daily_limit = usage_stats.usage_stats.record_request(
+        user_id=user_id, 
+        model=bot_names['claude35'],  # 图片处理使用Claude-3.5
+        is_image=True
+    )
+    
+    if not allow_request:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"🚫 您今日的请求配额已用尽（{daily_used}/{daily_limit}）。请明天再试或联系管理员提高限制。"
+        )
+        return
+    
+    logging.info(f"开始处理用户 {user_id} 的图片请求 (今日第 {daily_used}/{daily_limit} 次请求)")
     
     # 获取图片ID (选择最大分辨率的图片)
     photo = update.message.photo[-1]
@@ -197,7 +213,26 @@ async def handle_message(update: Update, context):
     if not check_user_permission(user_id, update, context):
         return
     
-    logging.info(f"开始处理用户 {user_id} 的请求")
+    # 获取当前或默认模型
+    current_model = default_bot_name
+    if user_id in user_context:
+        current_model = user_context[user_id]['bot_name']
+    
+    # 检查使用限制
+    allow_request, daily_used, daily_limit = usage_stats.usage_stats.record_request(
+        user_id=user_id, 
+        model=current_model,
+        is_image=False
+    )
+    
+    if not allow_request:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"🚫 您今日的请求配额已用尽（{daily_used}/{daily_limit}）。请明天再试或联系管理员提高限制。"
+        )
+        return
+    
+    logging.info(f"开始处理用户 {user_id} 的请求 (今日第 {daily_used}/{daily_limit} 次请求)")
     user_input = update.message.text
     message = fp.ProtocolMessage(role="user", content=user_input)
 
@@ -395,6 +430,185 @@ async def list_users(update: Update, context):
         text=message
     )
 
+# 查看个人使用统计
+async def stats(update: Update, context):
+    user_id = update.effective_user.id
+    
+    # 检查用户是否有权限
+    if not check_user_permission(user_id, update, context):
+        return
+    
+    # 获取用户统计数据
+    user_stats = usage_stats.usage_stats.get_user_stats(user_id)
+    
+    # 构建统计消息
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    message = f"📊 <b>您的使用统计</b>\n\n"
+    message += f"📅 <b>今日使用情况</b>: {user_stats['today_used']}/{user_stats['daily_limit']} 次请求\n"
+    message += f"📆 <b>本周使用总计</b>: {user_stats['week_total']} 次请求\n"
+    message += f"🔢 <b>累计请求总数</b>: {user_stats['total_requests']} 次\n"
+    message += f"🖼️ <b>图片处理总数</b>: {user_stats['image_requests']} 次\n\n"
+    
+    # 添加模型使用统计
+    if user_stats['model_usage']:
+        message += "<b>模型使用统计</b>:\n"
+        for model, count in user_stats['model_usage'].items():
+            percentage = (count / user_stats['total_requests']) * 100 if user_stats['total_requests'] > 0 else 0
+            message += f"- {model}: {count} 次 ({percentage:.1f}%)\n"
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=message,
+        parse_mode="HTML"
+    )
+
+# 管理员查看所有用户使用统计
+async def all_stats(update: Update, context):
+    user_id = update.effective_user.id
+    
+    # 检查是否为管理员
+    if user_id not in admin_users:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="抱歉，只有管理员可以使用此命令。"
+        )
+        return
+    
+    # 获取所有用户统计数据
+    all_users_stats = usage_stats.usage_stats.get_all_users_stats()
+    
+    if not all_users_stats:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="目前没有用户使用记录。"
+        )
+        return
+    
+    # 构建统计消息
+    today = datetime.now().strftime("%Y-%m-%d")
+    message = f"📊 <b>所有用户使用统计</b> (共 {len(all_users_stats)} 位用户)\n\n"
+    
+    # 添加前10位用户统计
+    for i, user_stat in enumerate(all_users_stats[:10], 1):
+        message += f"{i}. 用户 <code>{user_stat['user_id']}</code>\n"
+        message += f"   - 今日: {user_stat['today_used']}/{user_stat['daily_limit']} 次\n"
+        message += f"   - 总计: {user_stat['total_requests']} 次\n"
+        message += f"   - 图片: {user_stat['image_requests']} 次\n"
+    
+    # 总体统计
+    total_requests = sum(user['total_requests'] for user in all_users_stats)
+    total_image_requests = sum(user['image_requests'] for user in all_users_stats)
+    today_total = sum(user['today_used'] for user in all_users_stats)
+    
+    message += f"\n<b>总体统计</b>:\n"
+    message += f"- 今日总请求: {today_total} 次\n"
+    message += f"- 总请求数: {total_requests} 次\n"
+    message += f"- 总图片请求: {total_image_requests} 次"
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=message,
+        parse_mode="HTML"
+    )
+
+# 设置用户使用限制
+async def set_limit(update: Update, context):
+    user_id = update.effective_user.id
+    
+    # 检查是否为管理员
+    if user_id not in admin_users:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="抱歉，只有管理员可以使用此命令。"
+        )
+        return
+    
+    # 检查参数
+    if not context.args or len(context.args) != 2:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="请提供用户ID和限制次数，例如：/setlimit 12345678 100"
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        limit = int(context.args[1])
+        
+        if limit < 1:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="限制次数必须大于0。"
+            )
+            return
+            
+        # 设置用户限制
+        result = usage_stats.usage_stats.set_user_limit(target_user_id, limit)
+        
+        if result:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"已将用户 {target_user_id} 的每日限制设置为 {limit} 次。"
+            )
+            logging.info(f"管理员 {user_id} 将用户 {target_user_id} 的使用限制设为 {limit}")
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="设置用户限制失败。"
+            )
+    except ValueError:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="请提供有效的用户ID和限制次数。"
+        )
+
+# 重置用户今日使用量
+async def reset_usage(update: Update, context):
+    user_id = update.effective_user.id
+    
+    # 检查是否为管理员
+    if user_id not in admin_users:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="抱歉，只有管理员可以使用此命令。"
+        )
+        return
+    
+    # 检查参数
+    if not context.args:
+        # 重置所有用户
+        usage_stats.usage_stats.reset_daily_usage()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="已重置所有用户的今日使用量。"
+        )
+        logging.info(f"管理员 {user_id} 重置了所有用户的今日使用量")
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        
+        # 重置特定用户
+        result = usage_stats.usage_stats.reset_daily_usage(target_user_id)
+        
+        if result:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"已重置用户 {target_user_id} 的今日使用量。"
+            )
+            logging.info(f"管理员 {user_id} 重置了用户 {target_user_id} 的今日使用量")
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text="重置用户使用量失败。"
+            )
+    except ValueError:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="请提供有效的用户ID。"
+        )
+
 def main():
     # 检查环境变量
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -419,6 +633,13 @@ def main():
     application.add_handler(CommandHandler('adduser', add_user))
     application.add_handler(CommandHandler('removeuser', remove_user))
     application.add_handler(CommandHandler('listusers', list_users))
+    
+    # 添加使用统计相关命令
+    application.add_handler(CommandHandler('stats', stats))  # 查看个人使用统计
+    application.add_handler(CommandHandler('allstats', all_stats))  # 管理员查看所有用户统计
+    application.add_handler(CommandHandler('setlimit', set_limit))  # 设置用户使用限制
+    application.add_handler(CommandHandler('resetusage', reset_usage))  # 重置用户今日使用量
+    
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))  # 添加图片处理
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
