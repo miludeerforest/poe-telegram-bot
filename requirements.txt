@@ -1,0 +1,6 @@
+python-telegram-bot>=20.0
+fastapi-poe>=0.0.40
+requests
+google-generativeai
+pillow
+asyncio 

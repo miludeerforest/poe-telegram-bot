@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  bot:
+    build: .
+    container_name: poe-telegram-bot
+    restart: always
+    environment:
+      - TELEGRAM_BOT_TOKEN=  # 请在此处填入您的Telegram Bot Token
+      - POE_API_KEY=  # 请在此处填入您的POE API Key
+      - GOOGLE_API_KEY=  # 请在此处填入您的Google Gemini API Key
+      - ADMIN_USERS=  # 管理员用户ID，多个ID用逗号分隔
+      - ALLOWED_USERS=  # 可选：添加额外的普通用户ID，多个ID用逗号分隔
+    volumes:
+      - /etc/localtime:/etc/localtime:ro 
