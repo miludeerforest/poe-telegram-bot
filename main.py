@@ -540,90 +540,146 @@ async def switch_model(user_id, bot_name, update, context):
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"当前已经是 {bot_name} 模型。")
 
-# 添加用户命令处理程序（仅管理员可用）
+# 添加用户到白名单
 async def add_user(update: Update, context):
     user_id = update.effective_user.id
     
-    # 检查是否为管理员
+    # 只有管理员可以添加用户
     if user_id not in admin_users:
         await context.bot.send_message(
             chat_id=update.effective_chat.id, 
-            text="抱歉，只有管理员可以使用此命令。"
+            text="⚠️ 只有管理员可以执行此命令。"
+        )
+        return
+    
+    # 检查是否提供了用户ID
+    if not context.args:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="❌ 请提供要添加的用户ID，例如：/adduser 123456789"
         )
         return
     
     # 获取要添加的用户ID
-    if not context.args:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="请提供要添加的用户ID，例如：/adduser 12345678"
-        )
-        return
-    
     try:
-        new_user_id = int(context.args[0])
-        if new_user_id in allowed_users:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id, 
-                text=f"用户ID {new_user_id} 已在白名单中。"
-            )
-        else:
-            allowed_users.append(new_user_id)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id, 
-                text=f"已将用户ID {new_user_id} 添加到白名单。"
-            )
-            logging.info(f"管理员 {user_id} 添加了用户 {new_user_id} 到白名单")
+        target_user_id = int(context.args[0])
     except ValueError:
         await context.bot.send_message(
             chat_id=update.effective_chat.id, 
-            text="无效的用户ID，请提供有效的数字ID。"
+            text="❌ 无效的用户ID。用户ID必须是数字。"
+        )
+        return
+    
+    # 检查用户是否已经在白名单中
+    if target_user_id in allowed_users:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"ℹ️ 用户ID {target_user_id} 已在白名单中。"
+        )
+        return
+    
+    # 添加用户到白名单
+    allowed_users.append(target_user_id)
+    
+    # 使用init_data.py脚本更新白名单
+    try:
+        # 运行脚本添加用户
+        import subprocess
+        result = subprocess.run(['python3', 'init_data.py', '--add', str(target_user_id)], 
+                              capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logging.info(f"已成功添加用户 {target_user_id} 到白名单并同步")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"✅ 已成功添加用户 {target_user_id} 到白名单。"
+            )
+        else:
+            logging.error(f"添加用户时出错: {result.stderr}")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"❌ 添加用户时出错: {result.stderr}"
+            )
+    except Exception as e:
+        logging.error(f"调用init_data.py脚本时出错: {e}")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"❌ 同步白名单时出错: {str(e)}"
         )
 
-# 移除用户命令处理程序（仅管理员可用）
+# 从白名单中移除用户
 async def remove_user(update: Update, context):
     user_id = update.effective_user.id
     
-    # 检查是否为管理员
+    # 只有管理员可以移除用户
     if user_id not in admin_users:
         await context.bot.send_message(
             chat_id=update.effective_chat.id, 
-            text="抱歉，只有管理员可以使用此命令。"
+            text="⚠️ 只有管理员可以执行此命令。"
+        )
+        return
+    
+    # 检查是否提供了用户ID
+    if not context.args:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="❌ 请提供要移除的用户ID，例如：/removeuser 123456789"
         )
         return
     
     # 获取要移除的用户ID
-    if not context.args:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="请提供要移除的用户ID，例如：/removeuser 12345678"
-        )
-        return
-    
     try:
-        remove_user_id = int(context.args[0])
-        # 不允许移除管理员
-        if remove_user_id in admin_users:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id, 
-                text=f"无法移除管理员用户ID {remove_user_id}。"
-            )
-        elif remove_user_id in allowed_users:
-            allowed_users.remove(remove_user_id)
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id, 
-                text=f"已将用户ID {remove_user_id} 从白名单中移除。"
-            )
-            logging.info(f"管理员 {user_id} 从白名单中移除了用户 {remove_user_id}")
-        else:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id, 
-                text=f"用户ID {remove_user_id} 不在白名单中。"
-            )
+        target_user_id = int(context.args[0])
     except ValueError:
         await context.bot.send_message(
             chat_id=update.effective_chat.id, 
-            text="无效的用户ID，请提供有效的数字ID。"
+            text="❌ 无效的用户ID。用户ID必须是数字。"
+        )
+        return
+    
+    # 检查要移除的是否为管理员
+    if target_user_id in admin_users:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="⚠️ 不能移除管理员用户。"
+        )
+        return
+    
+    # 检查用户是否在白名单中
+    if target_user_id not in allowed_users:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"ℹ️ 用户ID {target_user_id} 不在白名单中。"
+        )
+        return
+    
+    # 从白名单中移除用户
+    allowed_users.remove(target_user_id)
+    
+    # 使用init_data.py脚本更新白名单
+    try:
+        # 运行脚本移除用户
+        import subprocess
+        result = subprocess.run(['python3', 'init_data.py', '--remove', str(target_user_id)], 
+                              capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logging.info(f"已成功从白名单移除用户 {target_user_id} 并同步")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"✅ 已成功从白名单移除用户 {target_user_id}。"
+            )
+        else:
+            logging.error(f"移除用户时出错: {result.stderr}")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id, 
+                text=f"❌ 移除用户时出错: {result.stderr}"
+            )
+    except Exception as e:
+        logging.error(f"调用init_data.py脚本时出错: {e}")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"❌ 同步白名单时出错: {str(e)}"
         )
 
 # 列出所有允许的用户（仅管理员可用）
