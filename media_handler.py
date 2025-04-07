@@ -34,24 +34,58 @@ def file_to_base64(file_bytes):
         logging.error(f"转换文件为base64时出错: {e}")
         return None
 
-async def download_file(bot, file_id, max_retries=3, retry_delay=2):
+async def download_file(bot, file_id, max_retries=5, retry_delay=3, initial_wait=5):
     """
-    下载Telegram文件，支持重试机制
+    下载Telegram文件，支持重试机制和初始等待
     
     参数:
         bot: Telegram机器人对象
         file_id: 文件ID
         max_retries: 最大重试次数
         retry_delay: 每次重试间隔的秒数
+        initial_wait: 大文件初始等待时间（秒）
     """
+    # 先获取文件信息
+    try:
+        file_info = None
+        for i in range(3):  # 尝试3次获取文件信息
+            try:
+                file_info = await bot.get_file(file_id)
+                break
+            except Exception as e:
+                logging.warning(f"尝试获取文件信息失败 ({i+1}/3): {e}")
+                await asyncio.sleep(2)
+                
+        if not file_info:
+            logging.error("无法获取文件信息")
+            return None
+            
+        file_size = file_info.file_size
+        logging.info(f"文件大小: {file_size} 字节")
+        
+        # 对于大文件，先等待一段时间确保上传完成
+        if file_size and file_size > 10*1024*1024:  # 大于10MB
+            file_size_mb = file_size / (1024 * 1024)
+            wait_time = initial_wait + int(file_size_mb / 5)  # 每5MB增加1秒等待
+            logging.info(f"大文件 ({file_size_mb:.1f}MB)，等待 {wait_time} 秒确保上传完成")
+            await asyncio.sleep(wait_time)
+    except Exception as e:
+        logging.error(f"获取文件信息时出错: {e}")
+        file_size = None
+    
+    # 下载文件，带重试机制
     for attempt in range(max_retries):
         try:
-            # 先获取文件信息
+            # 下载文件
+            if attempt > 0:
+                logging.info(f"重试下载文件 (尝试 {attempt+1}/{max_retries})")
+                
+            # 重新获取文件对象，避免因长时间等待导致的token失效
             file = await bot.get_file(file_id)
             file_size = file.file_size
             
             # 如果文件太小，可能尚未完全上传，等待一下
-            if file_size is not None and file_size < 1024:  # 小于1KB的文件可能未完成上传
+            if file_size is not None and file_size < 1024 and attempt < 2:  # 小于1KB的文件可能未完成上传
                 logging.info(f"文件可能未完全上传，等待 {retry_delay} 秒 (文件大小: {file_size} 字节)")
                 await asyncio.sleep(retry_delay)
                 continue
@@ -63,18 +97,29 @@ async def download_file(bot, file_id, max_retries=3, retry_delay=2):
             # 验证文件是否下载完整
             if len(file_bytes) != file_size:
                 logging.warning(f"文件下载不完整：期望 {file_size} 字节，实际 {len(file_bytes)} 字节，重试中...")
-                await asyncio.sleep(retry_delay)
+                # 对于大文件，增加等待时间
+                if file_size and file_size > 10*1024*1024:
+                    await asyncio.sleep(retry_delay * 2)
+                else:
+                    await asyncio.sleep(retry_delay)
                 continue
                 
             logging.info(f"文件下载完成: {len(file_bytes)} 字节")
             return file_bytes
             
         except Exception as e:
-            logging.error(f"下载文件时出错 (尝试 {attempt+1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
+            error_msg = str(e)
+            logging.error(f"下载文件时出错 (尝试 {attempt+1}/{max_retries}): {error_msg}")
+            
+            # 对"文件不可访问"错误特殊处理
+            if "file is not accessible" in error_msg.lower() or "wrong file_id" in error_msg.lower():
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (attempt + 2)  # 随重试次数增加等待时间
+                    logging.info(f"文件可能尚未完全上传，等待 {wait_time} 秒后重试")
+                    await asyncio.sleep(wait_time)
+                    
+            elif attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
-            else:
-                return None
     
     logging.error(f"经过 {max_retries} 次尝试后无法下载文件")
     return None

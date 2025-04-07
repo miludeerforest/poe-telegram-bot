@@ -237,6 +237,18 @@ async def handle_video(update: Update, context):
     duration = video.duration
     file_size = video.file_size
     
+    # 记录视频基本信息
+    file_format = video.mime_type.split('/')[-1] if video.mime_type else "未知"
+    logging.info(f"接收到视频，格式: {file_format}, 大小: {file_size/1024/1024:.2f}MB, 时长: {duration}秒")
+    
+    # 视频格式检查
+    supported_formats = ['mp4', 'mpeg4', 'quicktime', 'mov', 'x-matroska', 'webm']
+    if file_format not in supported_formats and file_format != "未知":
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"⚠️ 视频格式 {file_format} 可能不被支持。建议转换为MP4格式后上传。"
+        )
+    
     # 检查视频时长和大小
     if duration > 300:  # 大于5分钟的视频
         await context.bot.send_message(
@@ -244,46 +256,90 @@ async def handle_video(update: Update, context):
             text="⚠️ 视频时长超过5分钟，可能无法完整分析。建议上传较短的视频片段。"
         )
     
+    # 给出基于文件大小的指导
+    message_text = ""
     if file_size > 20*1024*1024 and file_size <= 50*1024*1024:  # 大于20MB但小于50MB
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text="⚠️ 视频文件较大，将尝试自动压缩。如处理失败，请上传更小的视频或降低视频质量。"
-        )
+        message_text = "⚠️ 视频文件较大，将尝试自动压缩。如处理失败，请上传更小的视频或降低视频质量。"
     elif file_size > 50*1024*1024:  # 大于50MB
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text="⚠️ 视频文件过大，可能超出处理能力。将尝试自动压缩，但成功率较低。建议手动压缩后重新上传。"
-        )
-    
+        message_text = "⚠️ 视频文件过大，可能超出处理能力。将尝试自动压缩，但成功率较低。建议手动压缩后重新上传。"
+    else:
+        message_text = f"📥 正在接收视频文件，请稍等... (大小: {file_size/1024/1024:.2f}MB)"
+        
     # 告知用户视频正在处理
     progress_message = await context.bot.send_message(
         chat_id=chat_id, 
-        text="📥 正在接收视频文件，请稍等..."
+        text=message_text
     )
     
+    # 添加等待时间，与文件大小成正比
+    wait_time = 2 + int(file_size / (5*1024*1024))  # 每5MB增加1秒等待，最少2秒
+    logging.info(f"等待 {wait_time} 秒，确保文件上传完成")
+    await asyncio.sleep(wait_time)
+    
     # 更新进度信息
-    await asyncio.sleep(2)  # 等待文件上传
-    await progress_message.edit_text("📥 正在接收视频文件，请稍等...\n⏳ 正在下载文件...")
+    try:
+        await progress_message.edit_text(f"📥 正在接收视频文件，请稍等...\n⏳ 正在下载和处理视频...\n(大小: {file_size/1024/1024:.2f}MB, 时长: {duration}秒)")
+    except Exception as e:
+        logging.warning(f"更新进度消息失败: {e}")
     
     # 处理视频
     caption = update.message.caption or "请分析这个视频"
-    result = await media_handler.process_video(context.bot, file_id, caption, chat_id)
     
-    # 更新进度消息
-    if "下载视频失败" in result["description"] or "视频压缩后仍然过大" in result["description"] or "视频压缩失败" in result["description"]:
-        await progress_message.edit_text(f"❌ {result['description']}")
+    # 尝试处理视频，如果失败，给出更详细的反馈
+    try:
+        result = await media_handler.process_video(context.bot, file_id, caption, chat_id)
+        
+        # 更新进度消息
+        if "下载视频失败" in result["description"] or "视频压缩后仍然过大" in result["description"] or "视频压缩失败" in result["description"]:
+            # 对于特定错误类型，给出更具体的建议
+            error_message = result["description"]
+            if "下载视频失败" in error_message:
+                error_message = f"❌ 下载视频失败。可能原因：\n1. 文件仍在上传中\n2. 文件格式不兼容\n3. 网络连接问题\n\n建议：\n- 稍后重试\n- 压缩后再上传\n- 转换为MP4格式"
+            
+            try:
+                await progress_message.edit_text(error_message)
+            except:
+                await context.bot.send_message(chat_id=chat_id, text=error_message)
+            return
+    except Exception as e:
+        logging.error(f"视频处理异常: {e}")
+        error_message = f"❌ 视频处理出错: {str(e)}\n\n请尝试：\n- 上传更小的视频文件\n- 使用标准MP4格式\n- 降低视频分辨率"
+        try:
+            await progress_message.edit_text(error_message)
+        except:
+            await context.bot.send_message(chat_id=chat_id, text=error_message)
         return
     
-    await progress_message.edit_text("📥 视频接收完成\n🔍 正在使用Google Gemini 2.0 Flash分析视频内容...\n⏳ 这可能需要较长时间，请耐心等待")
+    try:
+        await progress_message.edit_text("📥 视频接收完成\n🔍 正在使用Google Gemini 2.0 Flash分析视频内容...\n⏳ 这可能需要较长时间，请耐心等待")
+    except Exception as e:
+        logging.warning(f"更新进度消息失败: {e}")
+        # 可能是由于消息已被其他更新替换，创建新消息
+        progress_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text="🔍 正在使用Google Gemini 2.0 Flash分析视频内容...\n⏳ 这可能需要较长时间，请耐心等待"
+        )
     
     # 构建消息内容
     if result["description"]:
         # 视频分析完成，更新进度消息
         if "分析失败" in result["description"]:
-            await progress_message.edit_text(f"❌ {result['description']}")
+            try:
+                await progress_message.edit_text(f"❌ {result['description']}\n\n建议：\n- 上传更短的视频片段（30秒以内）\n- 使用MP4格式\n- 降低视频分辨率")
+            except:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ {result['description']}\n\n建议：\n- 上传更短的视频片段（30秒以内）\n- 使用MP4格式\n- 降低视频分辨率"
+                )
             return
             
-        await progress_message.edit_text("📥 视频接收完成\n✅ 视频分析完成\n💬 正在生成详细回复...")
+        try:
+            await progress_message.edit_text("📥 视频接收完成\n✅ 视频分析完成\n💬 正在生成详细回复...")
+        except:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ 视频分析完成\n💬 正在生成详细回复..."
+            )
         
         # 构建提示
         prompt = f"""以下是一个视频的分析（由Google Gemini 2.0 Flash模型生成）：
@@ -293,7 +349,7 @@ async def handle_video(update: Update, context):
 
 用户说明: {caption}
 
-请根据上述视频分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对视频内容进行深入解读。"""
+请根据上述视频分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对视频内容进行深入解读。如果分析结果表明视频未能被正确处理，请建议用户提供不同格式或更短的视频片段。"""
         
         # 添加到用户上下文
         message = fp.ProtocolMessage(role="user", content=prompt)
@@ -318,7 +374,13 @@ async def handle_video(update: Update, context):
             user_tasks[user_id] = asyncio.create_task(handle_user_request(user_id, update, context))
     else:
         # 处理视频失败
-        await progress_message.edit_text(f"❌ 处理视频时出错: {result.get('description', '未知错误')}")
+        try:
+            await progress_message.edit_text(f"❌ 处理视频时出错: {result.get('description', '未知错误')}")
+        except:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ 处理视频时出错: {result.get('description', '未知错误')}"
+            )
 
 # 处理用户音频
 async def handle_audio(update: Update, context):
