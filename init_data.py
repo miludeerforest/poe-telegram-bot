@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+import argparse
 from usage_stats import UsageStats, STATS_FILE, DATA_DIR
 
 # 配置日志
@@ -71,18 +72,26 @@ def init_data():
                 backup_allowed_users = data.get("allowed_users", [])
                 backup_user_limits = data.get("user_limits", {})
                 
-                # 合并允许的用户
+                logging.info(f"备份文件中的白名单用户: {backup_allowed_users}")
+                logging.info(f"备份文件中的用户限制: {backup_user_limits}")
+                
+                # 确保所有备份的白名单用户也在当前白名单中
                 for user_id in backup_allowed_users:
+                    if isinstance(user_id, str):
+                        user_id = int(user_id)
                     if user_id not in allowed_users:
                         allowed_users.append(user_id)
                 
-                # 设置用户限制
+                # 合并用户限制设置
                 for user_id, limit in backup_user_limits.items():
                     stats.set_user_limit(int(user_id), int(limit))
                 
                 logging.info(f"已从备份导入 {len(backup_allowed_users)} 个用户和 {len(backup_user_limits)} 个用户限制")
         except Exception as e:
             logging.error(f"导入备份数据时出错: {e}")
+    
+    # 打印当前白名单用户
+    logging.info(f"当前白名单用户: {allowed_users}")
     
     # 更新.env文件中的ALLOWED_USERS
     if allowed_users:
@@ -128,6 +137,44 @@ def init_data():
         logging.error(f"保存备份数据时出错: {e}")
     
     logging.info("用户数据初始化完成")
+    return allowed_users
+
+def update_allowed_users(add_user_id=None, remove_user_id=None):
+    """更新白名单用户并同步数据"""
+    # 获取当前白名单
+    allowed_users = init_data()
+    
+    if add_user_id:
+        if add_user_id not in allowed_users:
+            allowed_users.append(add_user_id)
+            logging.info(f"已添加用户 {add_user_id} 到白名单")
+        else:
+            logging.info(f"用户 {add_user_id} 已在白名单中")
+            
+    if remove_user_id:
+        if remove_user_id in allowed_users:
+            allowed_users.remove(remove_user_id)
+            logging.info(f"已从白名单移除用户 {remove_user_id}")
+        else:
+            logging.info(f"用户 {remove_user_id} 不在白名单中")
+    
+    # 再次运行init_data确保数据同步
+    if add_user_id or remove_user_id:
+        init_data()
+    
+    return allowed_users
 
 if __name__ == "__main__":
-    init_data() 
+    parser = argparse.ArgumentParser(description="用户数据初始化工具")
+    parser.add_argument("--add", type=int, help="添加用户到白名单")
+    parser.add_argument("--remove", type=int, help="从白名单移除用户")
+    parser.add_argument("--sync", action="store_true", help="同步白名单数据")
+    
+    args = parser.parse_args()
+    
+    if args.add:
+        update_allowed_users(add_user_id=args.add)
+    elif args.remove:
+        update_allowed_users(remove_user_id=args.remove)
+    else:
+        init_data() 
