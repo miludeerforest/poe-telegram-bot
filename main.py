@@ -349,13 +349,17 @@ async def handle_audio(update: Update, context):
     if update.message.voice:
         audio = update.message.voice
         audio_type = "语音"
+        file_format = "ogg"  # Telegram的语音消息默认为OGG格式
     else:
         audio = update.message.audio
         audio_type = "音频"
+        file_format = audio.mime_type.split('/')[-1] if audio.mime_type else "未知"
     
     file_id = audio.file_id
     duration = getattr(audio, 'duration', None)
     file_size = getattr(audio, 'file_size', None)
+    
+    logging.info(f"接收到{audio_type}，格式: {file_format}, 大小: {file_size} 字节, 时长: {duration}秒")
     
     # 检查音频时长和大小
     if duration and duration > 300:  # 大于5分钟的音频
@@ -389,16 +393,36 @@ async def handle_audio(update: Update, context):
         await progress_message.edit_text(f"❌ {result['description']}")
         return
     
-    await progress_message.edit_text(f"📥 {audio_type}接收完成\n🔍 正在使用Google Gemini 2.0 Flash分析{audio_type}内容...\n⏳ 这可能需要较长时间，请耐心等待")
+    try:
+        await progress_message.edit_text(f"📥 {audio_type}接收完成\n🔍 正在使用Google Gemini 2.0 Flash分析{audio_type}内容...\n⏳ 这可能需要较长时间，请耐心等待")
+    except Exception as e:
+        logging.warning(f"更新进度消息失败: {e}")
+        # 可能是由于消息已被其他更新替换，创建新消息
+        progress_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🔍 正在使用Google Gemini 2.0 Flash分析{audio_type}内容...\n⏳ 这可能需要较长时间，请耐心等待"
+        )
     
     # 构建消息内容
     if result["description"]:
         # 音频分析完成，更新进度消息
         if "分析失败" in result["description"]:
-            await progress_message.edit_text(f"❌ {result['description']}")
+            try:
+                await progress_message.edit_text(f"❌ {result['description']}")
+            except:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ {result['description']}"
+                )
             return
             
-        await progress_message.edit_text(f"📥 {audio_type}接收完成\n✅ {audio_type}分析完成\n💬 正在生成详细回复...")
+        try:
+            await progress_message.edit_text(f"📥 {audio_type}接收完成\n✅ {audio_type}分析完成\n💬 正在生成详细回复...")
+        except:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"✅ {audio_type}分析完成\n💬 正在生成详细回复..."
+            )
         
         # 构建提示
         prompt = f"""以下是一个{audio_type}的分析（由Google Gemini 2.0 Flash模型生成）：
@@ -408,7 +432,7 @@ async def handle_audio(update: Update, context):
 
 用户说明: {caption}
 
-请根据上述{audio_type}分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对{audio_type}内容进行深入解读。"""
+请根据上述{audio_type}分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对{audio_type}内容进行深入解读。如果分析结果表明无法处理或识别该音频，请礼貌地告知用户，并建议提供不同格式的音频。"""
         
         # 添加到用户上下文
         message = fp.ProtocolMessage(role="user", content=prompt)
@@ -433,7 +457,13 @@ async def handle_audio(update: Update, context):
             user_tasks[user_id] = asyncio.create_task(handle_user_request(user_id, update, context))
     else:
         # 处理音频失败
-        await progress_message.edit_text(f"❌ 处理{audio_type}时出错: {result.get('description', '未知错误')}")
+        try:
+            await progress_message.edit_text(f"❌ 处理{audio_type}时出错: {result.get('description', '未知错误')}")
+        except:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ 处理{audio_type}时出错: {result.get('description', '未知错误')}"
+            )
 
 # 处理用户消息
 async def handle_message(update: Update, context):

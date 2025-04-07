@@ -85,7 +85,7 @@ async def verify_media_file(file_bytes, file_ext):
     
     参数:
         file_bytes: 文件字节数据
-        file_ext: 文件扩展名（.mp4 或 .mp3）
+        file_ext: 文件扩展名（.mp4, .mp3, .wav 等）
     
     返回:
         bool: 文件是否有效
@@ -98,15 +98,60 @@ async def verify_media_file(file_bytes, file_ext):
         logging.warning(f"媒体文件过小 ({len(file_bytes)} 字节)，可能无效")
         return False
     
-    # 检查文件头部特征（简单验证）
-    if file_ext == '.mp4' and not (file_bytes[:8].startswith(b'\x00\x00\x00') or file_bytes[:8].startswith(b'ftyp')):
-        logging.warning(f"疑似无效的MP4文件")
-        return False
+    # 视频文件验证
+    if file_ext.lower() in ['.mp4', '.mov', '.avi', '.mkv', '.webm']:
+        # MP4文件检查（常见的MP4文件特征）
+        if file_ext.lower() == '.mp4' and not (file_bytes[:8].startswith(b'\x00\x00\x00') or 
+                                     b'ftyp' in file_bytes[:12] or 
+                                     b'moov' in file_bytes[:100]):
+            logging.warning(f"疑似无效的MP4文件")
+            return False
+            
+        # MOV文件检查
+        if file_ext.lower() == '.mov' and not (b'ftyp' in file_bytes[:12] or b'moov' in file_bytes[:100] or b'wide' in file_bytes[:12]):
+            logging.warning(f"疑似无效的MOV文件")
+            return False
+            
+        # 一般视频文件特征检测
+        # 很多视频格式在开头都会有特定的标记，如果没有这些标记，文件可能无效
+        video_signatures = [b'ftyp', b'moov', b'wide', b'mdat', b'AVI', b'RIFF', b'webm', b'matroska']
+        if not any(sig in file_bytes[:100] for sig in video_signatures):
+            logging.warning(f"视频文件可能无效，没有找到常见的视频文件特征")
+            # 不立即返回假，因为有些视频格式可能没有这些特征
+
+    # 音频文件验证
+    elif file_ext.lower() in ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']:
+        # MP3文件检查
+        if file_ext.lower() == '.mp3':
+            if not (file_bytes[:3] == b'ID3' or  # ID3标签头
+                   file_bytes[:2] == b'\xff\xfb' or  # MPEG音频帧同步标记
+                   file_bytes[:2] == b'\xff\xf3' or  # MPEG音频帧变体
+                   file_bytes[:2] == b'\xff\xfa' or  # 另一个MPEG变体
+                   file_bytes[:2] == b'\xff\xf2'):  # 另一个MPEG变体
+                logging.warning(f"疑似无效的MP3文件")
+                return False
+                
+        # WAV文件检查
+        if file_ext.lower() == '.wav' and not (file_bytes[:4] == b'RIFF' and file_bytes[8:12] == b'WAVE'):
+            logging.warning(f"疑似无效的WAV文件")
+            return False
+            
+        # OGG文件检查
+        if file_ext.lower() == '.ogg' and not file_bytes[:4] == b'OggS':
+            logging.warning(f"疑似无效的OGG文件")
+            return False
+            
+        # FLAC文件检查
+        if file_ext.lower() == '.flac' and not file_bytes[:4] == b'fLaC':
+            logging.warning(f"疑似无效的FLAC文件")
+            return False
+            
+        # AAC和M4A文件检查
+        if file_ext.lower() in ['.aac', '.m4a'] and not (b'ftypM4A' in file_bytes[:20] or b'mp42' in file_bytes[:20]):
+            logging.warning(f"疑似无效的AAC/M4A文件")
+            return False
     
-    if file_ext == '.mp3' and not (file_bytes[:3] == b'ID3' or file_bytes[:2] == b'\xff\xfb'):
-        logging.warning(f"疑似无效的MP3文件")
-        return False
-    
+    # 如果以上检测都通过了，我们认为文件可能是有效的
     return True
 
 async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption="", max_retries=3):
@@ -333,6 +378,74 @@ async def process_video(bot, file_id, caption="", chat_id=None):
             "file_content": None
         }
 
+async def convert_audio_to_mp3(audio_bytes, original_ext, chat_id=None, bot=None):
+    """
+    将不同格式的音频转换为MP3格式
+    
+    参数:
+        audio_bytes: 音频文件字节
+        original_ext: 原始文件扩展名
+        chat_id: 聊天ID，用于发送状态消息
+        bot: Telegram机器人对象
+        
+    返回:
+        转换后的MP3格式音频字节，如果转换失败则返回None
+    """
+    # 如果已经是MP3，就不需要转换
+    if original_ext.lower() == '.mp3':
+        return audio_bytes
+        
+    # 需要使用ffmpeg转换
+    with tempfile.NamedTemporaryFile(suffix=original_ext, delete=False) as input_file:
+        input_path = input_file.name
+        input_file.write(audio_bytes)
+    
+    # 创建输出临时文件
+    output_fd, output_path = tempfile.mkstemp(suffix='.mp3')
+    os.close(output_fd)
+    
+    try:
+        if chat_id and bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🔄 正在转换音频格式为MP3，以提高兼容性..."
+            )
+            
+        # 转换命令
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-c:a', 'libmp3lame',
+            '-q:a', '2',  # 高质量MP3
+            '-y', output_path
+        ]
+        
+        logging.info(f"开始转换音频: {' '.join(cmd)}")
+        
+        # 执行ffmpeg命令
+        from video_compressor import run_command
+        await run_command(cmd)
+        
+        # 读取转换后的文件
+        with open(output_path, 'rb') as f:
+            mp3_bytes = f.read()
+            
+        logging.info(f"音频转换成功: {len(audio_bytes)} 字节 -> {len(mp3_bytes)} 字节")
+        return mp3_bytes
+        
+    except Exception as e:
+        logging.error(f"转换音频失败: {e}")
+        return None
+    
+    finally:
+        # 清理临时文件
+        try:
+            if os.path.exists(input_path):
+                os.unlink(input_path)
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+        except Exception as e:
+            logging.error(f"清理音频转换临时文件时出错: {e}")
+
 async def process_audio(bot, file_id, caption="", chat_id=None):
     """
     处理音频文件
@@ -365,10 +478,83 @@ async def process_audio(bot, file_id, caption="", chat_id=None):
                 "description": f"❌ 音频文件过大 ({audio_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)，无法处理。请上传更小的音频文件。",
                 "file_content": None
             }
+            
+        # 检查并尝试获取音频格式
+        audio_format = '.mp3'  # 默认格式
+        
+        # 尝试通过ffprobe获取音频信息
+        with tempfile.NamedTemporaryFile(suffix='.audio', delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(audio_bytes)
+            
+        try:
+            # 使用ffprobe获取音频信息
+            probe_cmd = [
+                'ffprobe', '-v', 'error', '-show_entries', 
+                'format=format_name,duration:stream=codec_name', '-of', 
+                'json', temp_path
+            ]
+            
+            from video_compressor import run_command
+            audio_info = await run_command(probe_cmd)
+            logging.info(f"音频信息: {audio_info}")
+            
+            # 根据ffprobe结果确定文件格式
+            if 'mp3' in audio_info.lower():
+                audio_format = '.mp3'
+            elif 'wav' in audio_info.lower():
+                audio_format = '.wav'
+            elif 'ogg' in audio_info.lower() or 'vorbis' in audio_info.lower():
+                audio_format = '.ogg'
+            elif 'aac' in audio_info.lower():
+                audio_format = '.aac'
+            elif 'm4a' in audio_info.lower() or 'mp4a' in audio_info.lower():
+                audio_format = '.m4a'
+            elif 'flac' in audio_info.lower():
+                audio_format = '.flac'
+                
+            logging.info(f"检测到音频格式: {audio_format}")
+        except Exception as e:
+            logging.warning(f"无法获取音频格式信息: {e}，使用默认格式.mp3")
+        finally:
+            # 清理临时文件
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except:
+                pass
+        
+        # 如果不是MP3格式，尝试转换
+        if audio_format.lower() != '.mp3':
+            if chat_id:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"检测到音频格式为 {audio_format}，尝试转换为MP3以提高兼容性..."
+                )
+            
+            converted_bytes = await convert_audio_to_mp3(audio_bytes, audio_format, chat_id, bot)
+            if converted_bytes:
+                audio_bytes = converted_bytes
+                audio_format = '.mp3'
+                logging.info("音频已成功转换为MP3格式")
+                
+                if chat_id:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="✅ 音频格式转换成功"
+                    )
+            else:
+                logging.warning("音频转换失败，将使用原始格式继续处理")
+                
+                if chat_id:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ 音频格式转换失败，将尝试直接处理，但可能会遇到兼容性问题"
+                    )
         
         # 分析音频
-        logging.info(f"音频下载完成，开始分析...")
-        description = await analyze_media_with_gemini(audio_bytes, ".mp3", "audio", caption)
+        logging.info(f"音频处理准备完成，开始分析...")
+        description = await analyze_media_with_gemini(audio_bytes, audio_format, "audio", caption)
         
         # 返回分析结果
         return {
