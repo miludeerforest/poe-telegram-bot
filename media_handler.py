@@ -109,7 +109,7 @@ async def verify_media_file(file_bytes, file_ext):
     
     return True
 
-async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption="", max_retries=2):
+async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption="", max_retries=3):
     """
     使用Google Gemini API分析媒体文件内容，支持重试机制
     """
@@ -120,9 +120,11 @@ async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption=""
     if not await verify_media_file(file_bytes, file_ext):
         return f"（无法分析媒体：文件验证失败，可能是无效的{media_type}文件）"
     
+    temp_path = None
+    
     for attempt in range(max_retries + 1):
         try:
-            # 创建临时文件
+            # 每次尝试都创建新的临时文件
             with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
                 temp_file.write(file_bytes)
                 temp_path = temp_file.name
@@ -138,9 +140,18 @@ async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption=""
             else:  # audio
                 prompt = f"请详细描述这个音频的内容。如果用户提供了说明: {caption}，请特别关注相关内容。请用中文回答。"
             
-            # 加载多媒体文件
+            # 加载多媒体文件，确保文件存在且可访问
+            if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+                logging.error(f"临时文件不存在或为空: {temp_path}")
+                # 为下一次尝试准备新文件
+                await asyncio.sleep(1)
+                continue
+                
             logging.info(f"上传{media_type}文件到Gemini API...")
             media_file = genai.upload_file(temp_path)
+            
+            # 确保文件上传成功后再继续
+            await asyncio.sleep(1)
             
             # 调用API分析媒体
             logging.info(f"调用Gemini API分析{media_type}内容...")
@@ -148,26 +159,49 @@ async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption=""
             
             # 清除临时文件
             try:
-                os.unlink(temp_path)
-            except:
-                pass
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                    temp_path = None
+            except Exception as e:
+                logging.warning(f"清除临时文件时出错: {e}")
             
             logging.info(f"{media_type}分析完成")
             # 返回分析结果
             return response.text
             
         except Exception as e:
-            logging.error(f"使用Google Gemini API分析{media_type}时出错 (尝试 {attempt+1}/{max_retries+1}): {e}")
+            error_msg = str(e)
+            logging.error(f"使用Google Gemini API分析{media_type}时出错 (尝试 {attempt+1}/{max_retries+1}): {error_msg}")
+            
             # 清除临时文件
             try:
-                os.unlink(temp_path)
-            except:
-                pass
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+                    temp_path = None
+            except Exception as file_e:
+                logging.warning(f"清除临时文件时出错: {file_e}")
+            
+            # 针对特定错误进行特殊处理
+            if "is not in an ACTIVE state" in error_msg:
+                logging.warning(f"文件状态不是ACTIVE，等待时间更长后重试")
+                await asyncio.sleep(5)  # 等待更长时间
                 
-            if attempt < max_retries:
-                await asyncio.sleep(3)  # 等待3秒后重试
+                # 如果是最后一次尝试，尝试改变策略
+                if attempt == max_retries:
+                    logging.info("尝试使用其他方法处理媒体...")
+                    # 这里可以添加一些备用策略
+            elif "file too large" in error_msg.lower():
+                return f"（{media_type}文件过大，超出API限制）"
+            elif "unsupported file type" in error_msg.lower():
+                return f"（不支持的{media_type}文件格式）"
             else:
-                return f"（{media_type}分析失败: {str(e)}）"
+                # 一般错误等待时间
+                await asyncio.sleep(3)
+            
+            # 如果是最后一次尝试且失败
+            if attempt == max_retries:
+                logging.error(f"{media_type}分析失败，已尝试{max_retries+1}次")
+                return f"（{media_type}分析失败: {error_msg}）"
 
 async def process_video(bot, file_id, caption="", chat_id=None):
     """
@@ -193,6 +227,41 @@ async def process_video(bot, file_id, caption="", chat_id=None):
         # 检查视频大小
         video_size_mb = len(video_bytes) / (1024 * 1024)
         logging.info(f"原始视频大小: {video_size_mb:.2f}MB")
+        
+        # 检查视频格式 - 使用临时文件和ffprobe
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(video_bytes)
+        
+        try:
+            # 使用ffprobe获取视频信息
+            probe_cmd = [
+                'ffprobe', '-v', 'error', '-show_entries', 
+                'format=duration,size:stream=width,height,codec_name', '-of', 
+                'json', temp_path
+            ]
+            
+            from video_compressor import run_command
+            video_info = await run_command(probe_cmd)
+            logging.info(f"视频信息: {video_info}")
+            
+            # 检查视频是否有效
+            if "codec_name" not in video_info and "duration" not in video_info:
+                logging.warning("视频文件可能无效或格式不受支持")
+                return {
+                    "description": "❌ 视频文件格式无效或不受支持，请提供MP4、MOV或AVI格式的视频",
+                    "file_content": None
+                }
+        except Exception as e:
+            logging.error(f"获取视频信息失败: {e}")
+            # 继续处理，因为有些视频即使ffprobe无法识别，ffmpeg仍可处理
+        finally:
+            # 清理临时文件
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except Exception as e:
+                logging.warning(f"清理临时文件失败: {e}")
         
         # 如果视频超过大小限制，进行压缩
         if video_size_mb > MAX_VIDEO_SIZE_MB:
@@ -237,6 +306,16 @@ async def process_video(bot, file_id, caption="", chat_id=None):
                     "description": "❌ 视频压缩失败，请上传更小的视频或降低视频质量后重试。",
                     "file_content": None
                 }
+                
+        # 准备分析前检查视频是否符合Gemini要求
+        # Gemini通常接受MP4、MOV格式，建议视频时长小于2分钟
+        
+        # 分析视频前告知用户
+        if chat_id:
+            await bot.send_message(
+                chat_id=chat_id,
+                text="🔍 正在分析视频，如果分析失败，建议尝试：\n1. 上传更短的视频片段（30秒以内）\n2. 使用MP4格式\n3. 降低视频分辨率"
+            )
         
         # 分析视频
         logging.info(f"视频处理准备完成，开始分析...")
