@@ -1,109 +1,118 @@
-# Poe Telegram Bot with Gemini Vision
+# Poe Telegram Bot 与 Gemini Vision 集成
 
-A powerful Telegram bot that integrates Poe API and Google Gemini image recognition, supporting multiple AI models.
+一个强大的 Telegram 机器人，集成了 Poe API 和 Google Gemini 图像识别，支持多种 AI 模型。
 
-## Features
+## 功能特点
 
-- Supports multiple AI models: GPT-4, Claude-3-Opus, and Claude-3.5-Sonnet
-- Image analysis: Uses Google Gemini 2.0 Flash model for image recognition
-- User whitelist management: Restricts bot usage permissions
-- Usage tracking and limits: Monitor and control user request quotas
-- Session context management: Remembers conversation history
-- Command menu: Easy access to bot functions
+- 支持多种 AI 模型：GPT-4、Claude-3-Opus 和 Claude-3.5-Sonnet
+- 图像分析：使用 Google Gemini 2.0 Flash 模型进行图像识别
+- 视频分析：使用 Google Gemini 2.0 Flash 模型分析视频内容
+- 音频分析：使用 Google Gemini 2.0 Flash 模型分析音频内容
+- 用户白名单管理：限制机器人使用权限
+- 使用统计和限制：监控和控制用户请求配额
+- 会话上下文管理：记住对话历史
+- 命令菜单：轻松访问机器人功能
 
-## Installation
+## 安装说明
 
-### Prerequisites
+### 前提条件
 
-- Docker and Docker Compose
-- Telegram Bot Token (from BotFather)
-- Poe API Key (from Poe website)
-- Google Gemini API Key (from Google AI Studio)
+- Docker 和 Docker Compose
+- Telegram Bot Token（从 BotFather 获取）
+- Poe API Key（从 Poe 网站获取）
+- Google Gemini API Key（从 Google AI Studio 获取）
 
-### Installation Process
+### 安装过程
 
-1. Clone the repository:
+1. 克隆仓库：
 
 ```bash
 git clone https://github.com/miludeerforest/poe-telegram-bot.git
 cd poe-telegram-bot
 ```
 
-2. Configure environment variables:
+2. 配置环境变量：
 
-Copy the `.env.example` file to `.env` and fill in your API keys:
+复制 `.env.example` 文件到 `.env` 并填写您的 API 密钥：
 
 ```bash
 cp .env.example .env
-# Edit the .env file
+# 编辑 .env 文件
 ```
 
-Or directly fill in the corresponding API keys in the `docker-compose.yml` file.
+或者直接在 `docker-compose.yml` 文件中填写相应的 API 密钥。
 
-3. Build and start Docker containers:
+3. 构建并启动 Docker 容器：
 
 ```bash
 docker compose up -d
 ```
 
-## Usage
+## 使用说明
 
-### Basic Commands
+### 基本命令
 
-- `/start` - Start chatting with the bot
-- `/new` - Start a new conversation, clear context
-- `/gpt4` - Switch to GPT-4 model
-- `/claude3` - Switch to Claude-3-Opus model
-- `/claude35` - Switch to Claude-3.5-Sonnet model
-- `/stats` - View your usage statistics
+- `/start` - 开始与机器人聊天
+- `/new` - 开始新对话，清除上下文
+- `/gpt4` - 切换到 GPT-4 模型
+- `/claude3` - 切换到 Claude-3-Opus 模型
+- `/claude35` - 切换到 Claude-3.5-Sonnet 模型
+- `/stats` - 查看您的使用统计
 
-### Admin Commands
+### 管理员命令
 
-- `/adduser <user ID>` - Add user to whitelist
-- `/removeuser <user ID>` - Remove user from whitelist
-- `/listusers` - List all allowed users
-- `/allstats` - View usage statistics for all users
-- `/setlimit <user ID> <limit>` - Set daily usage limit for a user
-- `/resetusage [user ID]` - Reset daily usage count (for all users or a specific user)
+- `/adduser <用户ID>` - 将用户添加到白名单
+- `/removeuser <用户ID>` - 从白名单中移除用户
+- `/listusers` - 列出所有允许的用户
+- `/allstats` - 查看所有用户的使用统计
+- `/setlimit <用户ID> <限制>` - 设置用户的每日使用限制
+- `/resetusage [用户ID]` - 重置每日使用计数（针对所有用户或特定用户）
 
-### Image Processing Feature
+### 多媒体处理功能
 
-Simply send an image to the bot, and the system will use Google Gemini 2.0 Flash model to analyze the image content, then send the analysis results and partial base64 encoding of the image to Claude-3.5-Sonnet for processing.
+1. **图片处理**：
+直接发送图片给机器人，系统将使用 Google Gemini 2.0 Flash 模型分析图片内容，然后将分析结果和图片部分 base64 编码发送给 Claude-3.5-Sonnet 处理。
 
-You can add descriptive text when sending images to specify which aspects of the image you want to learn about.
+2. **视频处理**：
+发送视频文件给机器人，系统将使用 Google Gemini 2.0 Flash 模型分析视频内容，然后将分析结果发送给 Claude-3.5-Sonnet 进行进一步处理。
 
-### Usage Tracking and Limits
+3. **音频处理**：
+发送语音消息或音频文件给机器人，系统将使用 Google Gemini 2.0 Flash 模型分析音频内容，然后将分析结果发送给 Claude-3.5-Sonnet 进行进一步处理。
 
-The bot tracks usage statistics for each user and enforces daily request limits:
-- Default users: 50 requests per day
-- Admin users: 200 requests per day
-- Custom limits can be set per user by admins
+您可以在发送多媒体文件时添加说明文字，指明您希望了解的具体方面。所有分析将以中文进行。
 
-The statistics tracked include:
-- Daily usage counts
-- Total request counts
-- Image processing counts
-- Model usage distribution
-- Weekly usage summary
+### 使用统计和限制
 
-## Configuration
+机器人会跟踪每个用户的使用统计并强制执行每日请求限制：
+- 普通用户：每天 50 个请求
+- 管理员用户：每天 200 个请求
+- 管理员可以为每个用户设置自定义限制
 
-In the `docker-compose.yml` file, you can set the following environment variables:
+跟踪的统计数据包括：
+- 每日使用计数
+- 总请求计数
+- 图像处理计数
+- 模型使用分布
+- 每周使用摘要
 
-- `TELEGRAM_BOT_TOKEN`: Telegram Bot Token
-- `POE_API_KEY`: Poe API Key
-- `GOOGLE_API_KEY`: Google Gemini API Key
-- `ADMIN_USERS`: List of admin user IDs (comma-separated)
-- `ALLOWED_USERS`: List of regular user IDs allowed to use the bot (comma-separated)
+## 配置说明
 
-## Contribution Guidelines
+在 `docker-compose.yml` 文件中，您可以设置以下环境变量：
 
-Pull Requests or Issues are welcome to improve this project.
+- `TELEGRAM_BOT_TOKEN`：Telegram 机器人令牌
+- `POE_API_KEY`：Poe API 密钥
+- `GOOGLE_API_KEY`：Google Gemini API 密钥
+- `ADMIN_USERS`：管理员用户 ID 列表（逗号分隔）
+- `ALLOWED_USERS`：允许使用机器人的普通用户 ID 列表（逗号分隔）
 
-## License
+## 贡献指南
+
+欢迎提交 Pull Requests 或 Issues 来改进此项目。
+
+## 许可证
 
 MIT
 
-## Disclaimer
+## 免责声明
 
-This project is for learning and research purposes only. Please follow the terms of use of the respective APIs. 
+此项目仅用于学习和研究目的。请遵守相应 API 的使用条款。 
