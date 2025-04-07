@@ -6,12 +6,17 @@ from io import BytesIO
 import tempfile
 import time
 import asyncio
+from video_compressor import compress_video
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 从环境变量获取Google API密钥
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+
+# 视频大小限制（MB）
+MAX_VIDEO_SIZE_MB = 20
+COMPRESSED_TARGET_SIZE_MB = 19  # 压缩目标略小于限制
 
 # 配置Google Gemini API
 if GOOGLE_API_KEY:
@@ -164,9 +169,15 @@ async def analyze_media_with_gemini(file_bytes, file_ext, media_type, caption=""
             else:
                 return f"（{media_type}分析失败: {str(e)}）"
 
-async def process_video(bot, file_id, caption=""):
+async def process_video(bot, file_id, caption="", chat_id=None):
     """
     处理视频文件
+    
+    参数:
+        bot: Telegram机器人对象
+        file_id: 文件ID
+        caption: 视频说明
+        chat_id: 聊天ID，用于发送处理状态消息
     """
     try:
         logging.info(f"开始处理视频文件 (ID: {file_id})")
@@ -175,12 +186,60 @@ async def process_video(bot, file_id, caption=""):
         video_bytes = await download_file(bot, file_id)
         if not video_bytes:
             return {
-                "description": "下载视频失败，请确保视频文件大小在20MB以内，并重新发送",
+                "description": "下载视频失败，请确保视频文件可以访问，并重新发送",
                 "file_content": None
             }
         
+        # 检查视频大小
+        video_size_mb = len(video_bytes) / (1024 * 1024)
+        logging.info(f"原始视频大小: {video_size_mb:.2f}MB")
+        
+        # 如果视频超过大小限制，进行压缩
+        if video_size_mb > MAX_VIDEO_SIZE_MB:
+            logging.info(f"视频文件过大 ({video_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)，尝试压缩...")
+            
+            # 发送压缩提示消息给用户
+            if chat_id:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ 视频文件过大 ({video_size_mb:.2f}MB)，可能导致处理失败。正在尝试压缩视频..."
+                )
+            
+            # 压缩视频
+            compressed_bytes = await compress_video(
+                video_bytes, 
+                target_size_mb=COMPRESSED_TARGET_SIZE_MB
+            )
+            
+            if compressed_bytes:
+                compressed_size_mb = len(compressed_bytes) / (1024 * 1024)
+                logging.info(f"视频压缩成功: {video_size_mb:.2f}MB -> {compressed_size_mb:.2f}MB")
+                
+                if compressed_size_mb <= MAX_VIDEO_SIZE_MB:
+                    # 使用压缩后的视频
+                    video_bytes = compressed_bytes
+                    
+                    # 告知用户压缩结果
+                    if chat_id:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"✅ 视频压缩成功: {video_size_mb:.2f}MB -> {compressed_size_mb:.2f}MB"
+                        )
+                else:
+                    logging.warning(f"压缩后视频仍然过大 ({compressed_size_mb:.2f}MB)，无法处理")
+                    return {
+                        "description": f"❌ 视频压缩后仍然过大 ({compressed_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)，无法处理。请上传更小的视频或降低视频质量后重试。",
+                        "file_content": None
+                    }
+            else:
+                logging.error("视频压缩失败")
+                return {
+                    "description": "❌ 视频压缩失败，请上传更小的视频或降低视频质量后重试。",
+                    "file_content": None
+                }
+        
         # 分析视频
-        logging.info(f"视频下载完成，开始分析...")
+        logging.info(f"视频处理准备完成，开始分析...")
         description = await analyze_media_with_gemini(video_bytes, ".mp4", "video", caption)
         
         # 返回分析结果
@@ -195,9 +254,15 @@ async def process_video(bot, file_id, caption=""):
             "file_content": None
         }
 
-async def process_audio(bot, file_id, caption=""):
+async def process_audio(bot, file_id, caption="", chat_id=None):
     """
     处理音频文件
+    
+    参数:
+        bot: Telegram机器人对象
+        file_id: 文件ID
+        caption: 音频说明
+        chat_id: 聊天ID，用于发送处理状态消息
     """
     try:
         logging.info(f"开始处理音频文件 (ID: {file_id})")
@@ -206,7 +271,19 @@ async def process_audio(bot, file_id, caption=""):
         audio_bytes = await download_file(bot, file_id)
         if not audio_bytes:
             return {
-                "description": "下载音频失败，请确保音频文件大小在20MB以内，并重新发送",
+                "description": "下载音频失败，请确保音频文件可以访问，并重新发送",
+                "file_content": None
+            }
+        
+        # 检查音频大小
+        audio_size_mb = len(audio_bytes) / (1024 * 1024)
+        logging.info(f"原始音频大小: {audio_size_mb:.2f}MB")
+        
+        # 音频文件超过大小限制
+        if audio_size_mb > MAX_VIDEO_SIZE_MB:  # 使用相同的大小限制
+            logging.warning(f"音频文件过大 ({audio_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)，无法处理")
+            return {
+                "description": f"❌ 音频文件过大 ({audio_size_mb:.2f}MB > {MAX_VIDEO_SIZE_MB}MB)，无法处理。请上传更小的音频文件。",
                 "file_content": None
             }
         

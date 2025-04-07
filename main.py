@@ -209,6 +209,7 @@ async def handle_photo(update: Update, context):
 # 处理用户视频
 async def handle_video(update: Update, context):
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     
     # 检查用户是否有权限
     if not check_user_permission(user_id, update, context):
@@ -223,35 +224,40 @@ async def handle_video(update: Update, context):
     
     if not allow_request:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
+            chat_id=chat_id, 
             text=f"🚫 您今日的请求配额已用尽（{daily_used}/{daily_limit}）。请明天再试或联系管理员提高限制。"
         )
         return
     
     logging.info(f"开始处理用户 {user_id} 的视频请求 (今日第 {daily_used}/{daily_limit} 次请求)")
     
-    # 获取视频文件ID和信息
+    # 获取视频信息
     video = update.message.video
     file_id = video.file_id
-    file_size = video.file_size
     duration = video.duration
+    file_size = video.file_size
     
     # 检查视频时长和大小
-    if duration and duration > 120:  # 大于2分钟的视频
+    if duration > 300:  # 大于5分钟的视频
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="⚠️ 视频时长超过2分钟，可能无法完整分析。建议上传较短的视频片段。"
+            chat_id=chat_id, 
+            text="⚠️ 视频时长超过5分钟，可能无法完整分析。建议上传较短的视频片段。"
         )
     
-    if file_size and file_size > 20*1024*1024:  # 大于20MB
+    if file_size > 20*1024*1024 and file_size <= 50*1024*1024:  # 大于20MB但小于50MB
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="⚠️ 视频文件过大，可能导致处理失败。建议上传小于20MB的视频文件。"
+            chat_id=chat_id, 
+            text="⚠️ 视频文件较大，将尝试自动压缩。如处理失败，请上传更小的视频或降低视频质量。"
+        )
+    elif file_size > 50*1024*1024:  # 大于50MB
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="⚠️ 视频文件过大，可能超出处理能力。将尝试自动压缩，但成功率较低。建议手动压缩后重新上传。"
         )
     
     # 告知用户视频正在处理
     progress_message = await context.bot.send_message(
-        chat_id=update.effective_chat.id, 
+        chat_id=chat_id, 
         text="📥 正在接收视频文件，请稍等..."
     )
     
@@ -261,10 +267,10 @@ async def handle_video(update: Update, context):
     
     # 处理视频
     caption = update.message.caption or "请分析这个视频"
-    result = await media_handler.process_video(context.bot, file_id, caption)
+    result = await media_handler.process_video(context.bot, file_id, caption, chat_id)
     
     # 更新进度消息
-    if "下载视频失败" in result["description"]:
+    if "下载视频失败" in result["description"] or "视频压缩后仍然过大" in result["description"] or "视频压缩失败" in result["description"]:
         await progress_message.edit_text(f"❌ {result['description']}")
         return
     
@@ -302,7 +308,7 @@ async def handle_video(update: Update, context):
                 # 切换到Claude-3.5-Sonnet
                 user_context[user_id]['bot_name'] = bot_names['claude35']
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id, 
+                    chat_id=chat_id, 
                     text=f"视频处理已临时切换到 {bot_names['claude35']} 模型"
                 )
             user_context[user_id]['messages'].append(message)
@@ -317,6 +323,7 @@ async def handle_video(update: Update, context):
 # 处理用户音频
 async def handle_audio(update: Update, context):
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
     
     # 检查用户是否有权限
     if not check_user_permission(user_id, update, context):
@@ -331,7 +338,7 @@ async def handle_audio(update: Update, context):
     
     if not allow_request:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
+            chat_id=chat_id, 
             text=f"🚫 您今日的请求配额已用尽（{daily_used}/{daily_limit}）。请明天再试或联系管理员提高限制。"
         )
         return
@@ -353,19 +360,19 @@ async def handle_audio(update: Update, context):
     # 检查音频时长和大小
     if duration and duration > 300:  # 大于5分钟的音频
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
+            chat_id=chat_id, 
             text=f"⚠️ {audio_type}时长超过5分钟，可能无法完整分析。建议上传较短的{audio_type}片段。"
         )
     
     if file_size and file_size > 20*1024*1024:  # 大于20MB
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
+            chat_id=chat_id, 
             text=f"⚠️ {audio_type}文件过大，可能导致处理失败。建议上传小于20MB的{audio_type}文件。"
         )
     
     # 告知用户音频正在处理
     progress_message = await context.bot.send_message(
-        chat_id=update.effective_chat.id, 
+        chat_id=chat_id, 
         text=f"📥 正在接收{audio_type}文件，请稍等..."
     )
     
@@ -375,10 +382,10 @@ async def handle_audio(update: Update, context):
     
     # 处理音频
     caption = update.message.caption or f"请分析这个{audio_type}"
-    result = await media_handler.process_audio(context.bot, file_id, caption)
+    result = await media_handler.process_audio(context.bot, file_id, caption, chat_id)
     
     # 更新进度消息
-    if "下载音频失败" in result["description"]:
+    if "下载音频失败" in result["description"] or "音频文件过大" in result["description"]:
         await progress_message.edit_text(f"❌ {result['description']}")
         return
     
@@ -416,7 +423,7 @@ async def handle_audio(update: Update, context):
                 # 切换到Claude-3.5-Sonnet
                 user_context[user_id]['bot_name'] = bot_names['claude35']
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id, 
+                    chat_id=chat_id, 
                     text=f"{audio_type}处理已临时切换到 {bot_names['claude35']} 模型"
                 )
             user_context[user_id]['messages'].append(message)
