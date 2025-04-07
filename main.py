@@ -5,6 +5,7 @@ from telegram.ext import Application, MessageHandler, filters, CommandHandler
 import logging
 import os
 import image_handler
+import media_handler  # 导入媒体处理模块
 import usage_stats  # 导入用户使用统计模块
 from datetime import datetime, timedelta
 
@@ -204,6 +205,153 @@ async def handle_photo(update: Update, context):
             chat_id=update.effective_chat.id, 
             text=f"处理图片时出错: {result['description']}"
         )
+
+# 处理用户视频
+async def handle_video(update: Update, context):
+    user_id = update.effective_user.id
+    
+    # 检查用户是否有权限
+    if not check_user_permission(user_id, update, context):
+        return
+    
+    # 检查使用限制
+    allow_request, daily_used, daily_limit = usage_stats.usage_stats.record_request(
+        user_id=user_id, 
+        model="Gemini-2.0-Flash",  # 视频处理使用Gemini-2.0-Flash
+        is_image=True  # 视频也算作多模态请求
+    )
+    
+    if not allow_request:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"🚫 您今日的请求配额已用尽（{daily_used}/{daily_limit}）。请明天再试或联系管理员提高限制。"
+        )
+        return
+    
+    logging.info(f"开始处理用户 {user_id} 的视频请求 (今日第 {daily_used}/{daily_limit} 次请求)")
+    
+    # 获取视频文件ID
+    video = update.message.video
+    file_id = video.file_id
+    
+    # 告知用户视频正在处理
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text="正在使用Google Gemini 2.0 Flash分析您的视频，这可能需要一些时间，请耐心等待..."
+    )
+    
+    # 处理视频
+    caption = update.message.caption or "请分析这个视频"
+    result = await media_handler.process_video(context.bot, file_id, caption)
+    
+    # 构建消息内容
+    if result["description"]:
+        # 构建提示
+        prompt = f"""以下是一个视频的分析（由Google Gemini 2.0 Flash模型生成）：
+
+视频分析:
+{result["description"]}
+
+用户说明: {caption}
+
+请根据上述视频分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对视频内容进行深入解读。"""
+        
+        # 添加到用户上下文
+        message = fp.ProtocolMessage(role="user", content=prompt)
+        
+        # 获取或创建用户上下文
+        if user_id not in user_context:
+            user_context[user_id] = {'messages': [message], 'bot_name': bot_names['claude35']}  # 视频处理默认使用Claude-3.5-Sonnet
+        else:
+            if user_context[user_id]['bot_name'] != bot_names['claude35']:
+                # 临时记住原来的模型
+                original_model = user_context[user_id]['bot_name']
+                # 切换到Claude-3.5-Sonnet
+                user_context[user_id]['bot_name'] = bot_names['claude35']
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id, 
+                    text=f"视频处理已临时切换到 {bot_names['claude35']} 模型"
+                )
+            user_context[user_id]['messages'].append(message)
+        
+        # 处理用户请求
+        if user_id not in user_tasks or user_tasks[user_id].done():
+            user_tasks[user_id] = asyncio.create_task(handle_user_request(user_id, update, context))
+
+# 处理用户音频
+async def handle_audio(update: Update, context):
+    user_id = update.effective_user.id
+    
+    # 检查用户是否有权限
+    if not check_user_permission(user_id, update, context):
+        return
+    
+    # 检查使用限制
+    allow_request, daily_used, daily_limit = usage_stats.usage_stats.record_request(
+        user_id=user_id, 
+        model="Gemini-2.0-Flash",  # 音频处理使用Gemini-2.0-Flash
+        is_image=True  # 音频也算作多模态请求
+    )
+    
+    if not allow_request:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"🚫 您今日的请求配额已用尽（{daily_used}/{daily_limit}）。请明天再试或联系管理员提高限制。"
+        )
+        return
+    
+    logging.info(f"开始处理用户 {user_id} 的音频请求 (今日第 {daily_used}/{daily_limit} 次请求)")
+    
+    # 获取音频文件ID (支持voice和audio两种消息类型)
+    if update.message.voice:
+        audio = update.message.voice
+    else:
+        audio = update.message.audio
+    file_id = audio.file_id
+    
+    # 告知用户音频正在处理
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text="正在使用Google Gemini 2.0 Flash分析您的音频，这可能需要一些时间，请耐心等待..."
+    )
+    
+    # 处理音频
+    caption = update.message.caption or "请分析这个音频"
+    result = await media_handler.process_audio(context.bot, file_id, caption)
+    
+    # 构建消息内容
+    if result["description"]:
+        # 构建提示
+        prompt = f"""以下是一个音频的分析（由Google Gemini 2.0 Flash模型生成）：
+
+音频分析:
+{result["description"]}
+
+用户说明: {caption}
+
+请根据上述音频分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对音频内容进行深入解读。"""
+        
+        # 添加到用户上下文
+        message = fp.ProtocolMessage(role="user", content=prompt)
+        
+        # 获取或创建用户上下文
+        if user_id not in user_context:
+            user_context[user_id] = {'messages': [message], 'bot_name': bot_names['claude35']}  # 音频处理默认使用Claude-3.5-Sonnet
+        else:
+            if user_context[user_id]['bot_name'] != bot_names['claude35']:
+                # 临时记住原来的模型
+                original_model = user_context[user_id]['bot_name']
+                # 切换到Claude-3.5-Sonnet
+                user_context[user_id]['bot_name'] = bot_names['claude35']
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id, 
+                    text=f"音频处理已临时切换到 {bot_names['claude35']} 模型"
+                )
+            user_context[user_id]['messages'].append(message)
+        
+        # 处理用户请求
+        if user_id not in user_tasks or user_tasks[user_id].done():
+            user_tasks[user_id] = asyncio.create_task(handle_user_request(user_id, update, context))
 
 # 处理用户消息
 async def handle_message(update: Update, context):
@@ -641,6 +789,8 @@ def main():
     application.add_handler(CommandHandler('resetusage', reset_usage))  # 重置用户今日使用量
     
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))  # 添加图片处理
+    application.add_handler(MessageHandler(filters.VIDEO, handle_video))  # 添加视频处理
+    application.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, handle_audio))  # 添加音频处理
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # 运行机器人
