@@ -230,22 +230,55 @@ async def handle_video(update: Update, context):
     
     logging.info(f"开始处理用户 {user_id} 的视频请求 (今日第 {daily_used}/{daily_limit} 次请求)")
     
-    # 获取视频文件ID
+    # 获取视频文件ID和信息
     video = update.message.video
     file_id = video.file_id
+    file_size = video.file_size
+    duration = video.duration
+    
+    # 检查视频时长和大小
+    if duration and duration > 120:  # 大于2分钟的视频
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="⚠️ 视频时长超过2分钟，可能无法完整分析。建议上传较短的视频片段。"
+        )
+    
+    if file_size and file_size > 20*1024*1024:  # 大于20MB
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="⚠️ 视频文件过大，可能导致处理失败。建议上传小于20MB的视频文件。"
+        )
     
     # 告知用户视频正在处理
-    await context.bot.send_message(
+    progress_message = await context.bot.send_message(
         chat_id=update.effective_chat.id, 
-        text="正在使用Google Gemini 2.0 Flash分析您的视频，这可能需要一些时间，请耐心等待..."
+        text="📥 正在接收视频文件，请稍等..."
     )
+    
+    # 更新进度信息
+    await asyncio.sleep(2)  # 等待文件上传
+    await progress_message.edit_text("📥 正在接收视频文件，请稍等...\n⏳ 正在下载文件...")
     
     # 处理视频
     caption = update.message.caption or "请分析这个视频"
     result = await media_handler.process_video(context.bot, file_id, caption)
     
+    # 更新进度消息
+    if "下载视频失败" in result["description"]:
+        await progress_message.edit_text(f"❌ {result['description']}")
+        return
+    
+    await progress_message.edit_text("📥 视频接收完成\n🔍 正在使用Google Gemini 2.0 Flash分析视频内容...\n⏳ 这可能需要较长时间，请耐心等待")
+    
     # 构建消息内容
     if result["description"]:
+        # 视频分析完成，更新进度消息
+        if "分析失败" in result["description"]:
+            await progress_message.edit_text(f"❌ {result['description']}")
+            return
+            
+        await progress_message.edit_text("📥 视频接收完成\n✅ 视频分析完成\n💬 正在生成详细回复...")
+        
         # 构建提示
         prompt = f"""以下是一个视频的分析（由Google Gemini 2.0 Flash模型生成）：
 
@@ -277,6 +310,9 @@ async def handle_video(update: Update, context):
         # 处理用户请求
         if user_id not in user_tasks or user_tasks[user_id].done():
             user_tasks[user_id] = asyncio.create_task(handle_user_request(user_id, update, context))
+    else:
+        # 处理视频失败
+        await progress_message.edit_text(f"❌ 处理视频时出错: {result.get('description', '未知错误')}")
 
 # 处理用户音频
 async def handle_audio(update: Update, context):
@@ -305,31 +341,67 @@ async def handle_audio(update: Update, context):
     # 获取音频文件ID (支持voice和audio两种消息类型)
     if update.message.voice:
         audio = update.message.voice
+        audio_type = "语音"
     else:
         audio = update.message.audio
+        audio_type = "音频"
+    
     file_id = audio.file_id
+    duration = getattr(audio, 'duration', None)
+    file_size = getattr(audio, 'file_size', None)
+    
+    # 检查音频时长和大小
+    if duration and duration > 300:  # 大于5分钟的音频
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"⚠️ {audio_type}时长超过5分钟，可能无法完整分析。建议上传较短的{audio_type}片段。"
+        )
+    
+    if file_size and file_size > 20*1024*1024:  # 大于20MB
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text=f"⚠️ {audio_type}文件过大，可能导致处理失败。建议上传小于20MB的{audio_type}文件。"
+        )
     
     # 告知用户音频正在处理
-    await context.bot.send_message(
+    progress_message = await context.bot.send_message(
         chat_id=update.effective_chat.id, 
-        text="正在使用Google Gemini 2.0 Flash分析您的音频，这可能需要一些时间，请耐心等待..."
+        text=f"📥 正在接收{audio_type}文件，请稍等..."
     )
     
+    # 更新进度信息
+    await asyncio.sleep(2)  # 等待文件上传
+    await progress_message.edit_text(f"📥 正在接收{audio_type}文件，请稍等...\n⏳ 正在下载文件...")
+    
     # 处理音频
-    caption = update.message.caption or "请分析这个音频"
+    caption = update.message.caption or f"请分析这个{audio_type}"
     result = await media_handler.process_audio(context.bot, file_id, caption)
+    
+    # 更新进度消息
+    if "下载音频失败" in result["description"]:
+        await progress_message.edit_text(f"❌ {result['description']}")
+        return
+    
+    await progress_message.edit_text(f"📥 {audio_type}接收完成\n🔍 正在使用Google Gemini 2.0 Flash分析{audio_type}内容...\n⏳ 这可能需要较长时间，请耐心等待")
     
     # 构建消息内容
     if result["description"]:
+        # 音频分析完成，更新进度消息
+        if "分析失败" in result["description"]:
+            await progress_message.edit_text(f"❌ {result['description']}")
+            return
+            
+        await progress_message.edit_text(f"📥 {audio_type}接收完成\n✅ {audio_type}分析完成\n💬 正在生成详细回复...")
+        
         # 构建提示
-        prompt = f"""以下是一个音频的分析（由Google Gemini 2.0 Flash模型生成）：
+        prompt = f"""以下是一个{audio_type}的分析（由Google Gemini 2.0 Flash模型生成）：
 
-音频分析:
+{audio_type}分析:
 {result["description"]}
 
 用户说明: {caption}
 
-请根据上述音频分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对音频内容进行深入解读。"""
+请根据上述{audio_type}分析和用户说明，详细回答用户的问题。如果用户没有特定问题，请对{audio_type}内容进行深入解读。"""
         
         # 添加到用户上下文
         message = fp.ProtocolMessage(role="user", content=prompt)
@@ -345,13 +417,16 @@ async def handle_audio(update: Update, context):
                 user_context[user_id]['bot_name'] = bot_names['claude35']
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id, 
-                    text=f"音频处理已临时切换到 {bot_names['claude35']} 模型"
+                    text=f"{audio_type}处理已临时切换到 {bot_names['claude35']} 模型"
                 )
             user_context[user_id]['messages'].append(message)
         
         # 处理用户请求
         if user_id not in user_tasks or user_tasks[user_id].done():
             user_tasks[user_id] = asyncio.create_task(handle_user_request(user_id, update, context))
+    else:
+        # 处理音频失败
+        await progress_message.edit_text(f"❌ 处理{audio_type}时出错: {result.get('description', '未知错误')}")
 
 # 处理用户消息
 async def handle_message(update: Update, context):
